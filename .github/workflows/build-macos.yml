@@ -1,0 +1,61 @@
+name: Build (macOS AU+VST3)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: 1
+      MACOSX_DEPLOYMENT_TARGET: 11.0
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fetch JUCE (no submodule needed)
+        run: git clone --depth=1 https://github.com/juce-framework/JUCE.git juce
+
+      - name: Tooling
+        run: brew install cmake ninja
+
+      - name: Configure (fresh, arm64 only)
+        run: |
+          rm -rf build
+          cmake -S . -B build -G "Ninja" \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build (verbose)
+        run: cmake --build build --config Release -- -v
+
+      - name: Locate outputs
+        run: |
+          VST3_DIR=$(find build -type d -name VST3 -path "*/Release/*" | head -n1)
+          AU_DIR=$(find build -type d -name AU -path "*/Release/*" | head -n1)
+          echo "VST3_DIR=$VST3_DIR" >> $GITHUB_ENV
+          echo "AU_DIR=$AU_DIR"     >> $GITHUB_ENV
+          test -d "$VST3_DIR" && test -d "$AU_DIR"
+
+      - name: Package unsigned .pkg
+        run: |
+          rm -rf pkgroot
+          mkdir -p "pkgroot/Library/Audio/Plug-Ins/VST3" \
+                   "pkgroot/Library/Audio/Plug-Ins/Components"
+          cp "$VST3_DIR/HappyAccident.vst3"    "pkgroot/Library/Audio/Plug-Ins/VST3/"
+          cp "$AU_DIR/HappyAccident.component" "pkgroot/Library/Audio/Plug-Ins/Components/"
+          pkgbuild --root pkgroot \
+                   --identifier com.happyapps.happyaccident \
+                   --version 0.1.0 \
+                   --install-location / \
+                   HappyAccident.pkg
+
+      - name: Upload artifacts (AU/VST3 + .pkg)
+        uses: actions/upload-artifact@v4
+        with:
+          name: HappyAccident-macOS
+          path: |
+            ${{ env.VST3_DIR }}/HappyAccident.vst3
+            ${{ env.AU_DIR }}/HappyAccident.component
+            HappyAccident.pkg
